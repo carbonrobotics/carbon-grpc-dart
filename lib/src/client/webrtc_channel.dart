@@ -97,13 +97,4 @@ class ClientChannel extends ClientChannelBase {
       _options,
     );
   }
-
-  @override
-  ClientCall<Q, R> createCall<Q, R>(
-      ClientMethod<Q, R> method, Stream<Q> requests, CallOptions options) {
-    if (_dataChannel.state != RTCDataChannelState.RTCDataChannelOpen) {
-      throw GrpcError.unavailable('DataChannel is not open');
-    }
-    return super.createCall(method, requests, options);
-  }
 }
