@@ -89,7 +89,11 @@ class ClientChannel extends ClientChannelBase {
   @override
   ClientConnection createConnection() {
     // Create a WebRTC transport connector
-    final transportConnector = WebRTCTransportConnector(_dataChannel, _authority);
+    final transportConnector = WebRTCTransportConnector(
+      _dataChannel,
+      _authority,
+      streamWindowSize: _options.streamWindowSize,
+    );
     
     // Use the existing HTTP/2 connection implementation with our WebRTC transport
     return Http2ClientConnection.fromClientTransportConnector(

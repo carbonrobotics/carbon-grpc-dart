@@ -30,14 +30,17 @@ import 'client_transport_connector.dart';
 class WebRTCTransportConnector implements ClientTransportConnector {
   final RTCDataChannel _dataChannel;
   final String _authority;
+  final int? _streamWindowSize;
   final Completer<void> _doneCompleter = Completer<void>();
   bool _isShutdown = false;
 
   /// Creates a WebRTC transport connector.
-  /// 
+  ///
   /// [dataChannel] - The WebRTC DataChannel to use as transport
   /// [authority] - The authority string for the gRPC service
-  WebRTCTransportConnector(this._dataChannel, this._authority) {
+  /// [streamWindowSize] - Optional HTTP/2 stream flow control window size
+  WebRTCTransportConnector(this._dataChannel, this._authority, {int? streamWindowSize})
+      : _streamWindowSize = streamWindowSize {
     // Listen for DataChannel closure
     _dataChannel.onDataChannelState = (RTCDataChannelState state) {
       if (state == RTCDataChannelState.RTCDataChannelClosed && !_doneCompleter.isCompleted) {
@@ -83,8 +86,9 @@ class WebRTCTransportConnector implements ClientTransportConnector {
     return ClientTransportConnection.viaStreams(
       incomingController.stream,
       outgoingSink,
-      settings: const ClientSettings(
+      settings: ClientSettings(
         concurrentStreamLimit: 100,
+        streamWindowSize: _streamWindowSize,
       ),
     );
   }

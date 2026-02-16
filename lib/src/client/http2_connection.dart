@@ -402,7 +402,13 @@ class SocketTransportConnector implements ClientTransportConnector {
       );
       incoming = socket;
     }
-    return ClientTransportConnection.viaStreams(incoming, socket);
+    return ClientTransportConnection.viaStreams(
+      incoming,
+      socket,
+      settings: _options.streamWindowSize != null
+          ? ClientSettings(streamWindowSize: _options.streamWindowSize)
+          : null,
+    );
   }
 
   Future<Stream<List<int>>> connectImpl(Proxy? proxy) async {

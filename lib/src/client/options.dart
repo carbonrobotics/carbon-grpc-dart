@@ -62,6 +62,10 @@ class ChannelOptions {
   final ClientKeepAliveOptions keepAlive;
   final Proxy? proxy;
 
+  /// The initial HTTP/2 stream-level flow control window size in bytes.
+  /// If null, uses the http2 package default (65535 bytes).
+  final int? streamWindowSize;
+
   const ChannelOptions({
     this.credentials = const ChannelCredentials.secure(),
     this.idleTimeout = defaultIdleTimeout,
@@ -72,5 +76,6 @@ class ChannelOptions {
     this.codecRegistry,
     this.keepAlive = const ClientKeepAliveOptions(),
     this.proxy,
+    this.streamWindowSize,
   });
 }
