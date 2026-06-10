@@ -13,9 +13,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'package:archive/archive.dart';
+
 import 'codec_all.dart';
 
 /// A gzip compressor and decompressor.
+///
+/// `dart:io`'s gzip is unavailable in the browser, so the web build uses the
+/// pure-Dart gzip from package:archive. It is synchronous, matching the [Codec]
+/// API, and produces/consumes standard RFC 1952 gzip — wire-compatible with the
+/// native (`dart:io`) codec and with server-side gzip.
 class GzipCodec implements Codec {
   const GzipCodec();
 
@@ -23,12 +30,8 @@ class GzipCodec implements Codec {
   final encodingName = 'gzip';
 
   @override
-  List<int> compress(List<int> data) {
-    throw UnsupportedError('Gzip is not supported for grpc web');
-  }
+  List<int> compress(List<int> data) => GZipEncoder().encodeBytes(data);
 
   @override
-  List<int> decompress(List<int> data) {
-    throw UnsupportedError('Gzip is not supported for grpc web');
-  }
+  List<int> decompress(List<int> data) => GZipDecoder().decodeBytes(data);
 }
