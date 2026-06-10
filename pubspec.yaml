@@ -20,6 +20,7 @@ environment:
   sdk: ^3.8.0
 
 dependencies:
+  archive: ^4.0.0
   async: ^2.13.0
   crypto: ^3.0.6
   fixnum: ^1.1.1
