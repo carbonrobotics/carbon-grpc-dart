@@ -129,12 +129,7 @@ class ServerHandler extends ServiceCall {
     _incomingSubscription = _stream.incomingMessages
         .transform(GrpcHttpDecoder())
         .transform(grpcDecompressor(codecRegistry: _codecRegistry))
-        .listen(
-          _onDataIdle,
-          onError: _onError,
-          onDone: _onDoneError,
-          cancelOnError: true,
-        );
+        .listen(_onDataIdle, onError: _onError, onDone: _onDoneError, cancelOnError: true);
     _stream.outgoingMessages.done.then((_) {
       cancel();
     });
@@ -151,6 +146,7 @@ class ServerHandler extends ServiceCall {
   // -- Idle state, incoming data --
 
   void _onDataIdle(GrpcMessage headerMessage) async {
+    if (isCanceled) return;
     onDataReceived?.add(null);
     if (headerMessage is! GrpcMetadata) {
       _sendError(GrpcError.unimplemented('Expected header frame'));
@@ -170,8 +166,7 @@ class ServerHandler extends ServiceCall {
     final serviceName = pathSegments[1];
     final methodName = pathSegments[2];
     if (_codecRegistry != null) {
-      final acceptedEncodings =
-          clientMetadata!['grpc-accept-encoding']?.split(',') ?? [];
+      final acceptedEncodings = clientMetadata!['grpc-accept-encoding']?.split(',') ?? [];
       _callEncodingCodec = acceptedEncodings
           .map(_codecRegistry.lookup)
           .firstWhere((c) => c != null, orElse: () => null);
@@ -276,6 +271,7 @@ class ServerHandler extends ServiceCall {
   // -- Active state, incoming data --
 
   void _onDataActive(GrpcMessage message) {
+    if (isCanceled) return;
     if (message is! GrpcData) {
       final error = GrpcError.unimplemented('Expected request');
       _sendError(error);
@@ -300,9 +296,7 @@ class ServerHandler extends ServiceCall {
     try {
       request = _descriptor.deserialize(data.data);
     } catch (error, trace) {
-      final grpcError = GrpcError.internal(
-        'Error deserializing request: $error',
-      );
+      final grpcError = GrpcError.internal('Error deserializing request: $error');
       _sendError(grpcError, trace);
       _requests!
         ..addError(grpcError, trace)
@@ -316,6 +310,7 @@ class ServerHandler extends ServiceCall {
   // -- Active state, outgoing response data --
 
   void _onResponse(dynamic response) {
+    if (isCanceled) return;
     try {
       final bytes = _descriptor.serialize(response);
       if (!_headersSent) {
@@ -336,10 +331,12 @@ class ServerHandler extends ServiceCall {
   }
 
   void _onResponseDone() {
+    if (isCanceled) return;
     sendTrailers();
   }
 
   void _onResponseError(Object error, StackTrace trace) {
+    if (isCanceled) return;
     if (error is GrpcError) {
       _sendError(error, trace);
     } else {
@@ -359,28 +356,20 @@ class ServerHandler extends ServiceCall {
     final outgoingHeadersMap = <String, String>{
       ':status': '200',
       'content-type': 'application/grpc',
-      if (_callEncodingCodec != null)
-        'grpc-encoding': _callEncodingCodec!.encodingName,
+      if (_callEncodingCodec != null) 'grpc-encoding': _callEncodingCodec!.encodingName,
     };
 
     outgoingHeadersMap.addAll(_customHeaders!);
     _customHeaders = null;
 
     final outgoingHeaders = <Header>[];
-    outgoingHeadersMap.forEach(
-      (key, value) =>
-          outgoingHeaders.add(Header(ascii.encode(key), utf8.encode(value))),
-    );
+    outgoingHeadersMap.forEach((key, value) => outgoingHeaders.add(Header(ascii.encode(key), utf8.encode(value))));
     _stream.sendHeaders(outgoingHeaders);
     _headersSent = true;
   }
 
   @override
-  void sendTrailers({
-    int? status = 0,
-    String? message,
-    Map<String, String>? errorTrailers,
-  }) {
+  void sendTrailers({int? status = 0, String? message, Map<String, String>? errorTrailers}) {
     _timeoutTimer?.cancel();
 
     final outgoingTrailersMap = <String, String>{};
@@ -403,19 +392,14 @@ class ServerHandler extends ServiceCall {
     _customTrailers = null;
     outgoingTrailersMap['grpc-status'] = status.toString();
     if (message != null) {
-      outgoingTrailersMap['grpc-message'] = Uri.encodeFull(
-        message,
-      ).replaceAll('%20', ' ');
+      outgoingTrailersMap['grpc-message'] = Uri.encodeFull(message).replaceAll('%20', ' ');
     }
     if (errorTrailers != null) {
       outgoingTrailersMap.addAll(errorTrailers);
     }
 
     final outgoingTrailers = <Header>[];
-    outgoingTrailersMap.forEach(
-      (key, value) =>
-          outgoingTrailers.add(Header(ascii.encode(key), utf8.encode(value))),
-    );
+    outgoingTrailersMap.forEach((key, value) => outgoingTrailers.add(Header(ascii.encode(key), utf8.encode(value))));
     _stream.sendHeaders(outgoingTrailers, endStream: true);
     // We're done!
     _cancelResponseSubscription();
@@ -443,6 +427,7 @@ class ServerHandler extends ServiceCall {
   }
 
   void _onDoneExpected() {
+    if (isCanceled) return;
     if (!(_hasReceivedRequest || _descriptor.streamingRequest)) {
       final error = GrpcError.unimplemented('No request received');
       _sendError(error);
@@ -467,11 +452,7 @@ class ServerHandler extends ServiceCall {
   void _sendError(GrpcError error, [StackTrace? trace]) {
     _errorHandler?.call(error, trace);
 
-    sendTrailers(
-      status: error.code,
-      message: error.message,
-      errorTrailers: error.trailers,
-    );
+    sendTrailers(status: error.code, message: error.message, errorTrailers: error.trailers);
   }
 
   void cancel() {
