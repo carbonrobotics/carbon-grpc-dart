@@ -21,6 +21,7 @@ import 'connection.dart';
 import 'http2_connection.dart';
 import 'options.dart';
 import 'webrtc_transport_connector.dart';
+import 'webrtc_transport_stats.dart';
 import 'method.dart';
 import '../shared/status.dart';
 
@@ -71,6 +72,14 @@ class ClientChannel extends ClientChannelBase {
   final RTCDataChannel _dataChannel;
   final String _authority;
   final ChannelOptions _options;
+  final WebRTCTransportStats _stats = WebRTCTransportStats();
+
+  /// Counters describing how the underlying data channel is behaving.
+  ///
+  /// Accumulates across reconnects for the life of this channel. Chiefly useful
+  /// for telling the native and web `flutter_webrtc` data-channel
+  /// implementations apart at runtime; see [WebRTCTransportStats].
+  WebRTCTransportStats get stats => _stats;
 
   /// Creates a new HTTP/2 over WebRTC client channel.
   /// 
@@ -89,7 +98,8 @@ class ClientChannel extends ClientChannelBase {
   @override
   ClientConnection createConnection() {
     // Create a WebRTC transport connector
-    final transportConnector = WebRTCTransportConnector(_dataChannel, _authority);
+    final transportConnector =
+        WebRTCTransportConnector(_dataChannel, _authority, stats: _stats);
     
     // Use the existing HTTP/2 connection implementation with our WebRTC transport
     return Http2ClientConnection.fromClientTransportConnector(

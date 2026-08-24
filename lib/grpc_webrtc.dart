@@ -33,5 +33,6 @@ library;
 
 export 'src/client/options.dart' show ChannelOptions;
 export 'src/client/webrtc_channel.dart' show ClientChannel;
+export 'src/client/webrtc_transport_stats.dart' show WebRTCTransportStats;
 export 'src/shared/api.dart';
 export 'src/shared/status.dart' show GrpcError, StatusCode;
