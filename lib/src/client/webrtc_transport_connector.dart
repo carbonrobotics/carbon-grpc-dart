@@ -22,6 +22,7 @@ import 'package:http2/transport.dart';
 import 'package:meta/meta.dart';
 
 import 'client_transport_connector.dart';
+import 'webrtc_transport_stats.dart';
 
 /// A transport connector that uses WebRTC DataChannel as the underlying
 /// transport for HTTP/2 connections.
@@ -32,6 +33,7 @@ import 'client_transport_connector.dart';
 class WebRTCTransportConnector implements ClientTransportConnector {
   final RTCDataChannel _dataChannel;
   final String _authority;
+  final WebRTCTransportStats? _stats;
   final Completer<void> _doneCompleter = Completer<void>();
   bool _isShutdown = false;
 
@@ -39,7 +41,12 @@ class WebRTCTransportConnector implements ClientTransportConnector {
   ///
   /// [dataChannel] - The WebRTC DataChannel to use as transport
   /// [authority] - The authority string for the gRPC service
-  WebRTCTransportConnector(this._dataChannel, this._authority) {
+  /// [stats] - Optional counters describing transport behaviour
+  WebRTCTransportConnector(
+    this._dataChannel,
+    this._authority, {
+    WebRTCTransportStats? stats,
+  }) : _stats = stats {
     // Listen for DataChannel closure
     _dataChannel.onDataChannelState = (RTCDataChannelState state) {
       if (state == RTCDataChannelState.RTCDataChannelClosed &&
@@ -67,11 +74,14 @@ class WebRTCTransportConnector implements ClientTransportConnector {
 
     // Create streams that bridge WebRTC DataChannel to HTTP/2
     final incomingController = StreamController<List<int>>();
-    final outgoingSink = WebRTCStreamSink(_dataChannel);
+    final outgoingSink = WebRTCStreamSink(_dataChannel, stats: _stats);
+    final sinceConnect = Stopwatch()..start();
 
     // Set up incoming data forwarding
     _dataChannel.onMessage = (RTCDataChannelMessage message) {
       if (message.isBinary && !incomingController.isClosed) {
+        _stats?.timeToFirstMessage ??= sinceConnect.elapsed;
+        _stats?.recordReceive(message.binary.length);
         incomingController.add(message.binary.toList());
       }
     };
@@ -113,6 +123,13 @@ class WebRTCTransportConnector implements ClientTransportConnector {
 /// [highWaterMark] until the channel reports it drained below
 /// [lowWaterMark] (or a poll interval elapses, for platforms where the
 /// buffered-amount-low event is unreliable).
+///
+/// Note that `bufferedAmount` is only trustworthy on web. `flutter_webrtc`'s
+/// native implementation caches it and refreshes the cache from an
+/// asynchronous platform event, so on iOS/Android it lags reality — and
+/// `send()` there cannot report failure at all, because the darwin plugin
+/// discards `sendData:`'s return value. [WebRTCTransportStats] measures both
+/// gaps; see [_sampleBufferedAmounts].
 @visibleForTesting
 class WebRTCStreamSink implements StreamSink<List<int>> {
   /// Pause the pump while the channel buffers more than this many bytes.
@@ -126,14 +143,21 @@ class WebRTCStreamSink implements StreamSink<List<int>> {
   /// Fallback poll interval while waiting for the buffer to drain.
   static const _drainPollInterval = Duration(milliseconds: 100);
 
+  /// How often the pump compares the cached buffered amount to the live one.
+  /// Throttled because the comparison costs a platform round trip on native.
+  static const _bufferedAmountSampleInterval = Duration(milliseconds: 500);
+
   final RTCDataChannel _dataChannel;
+  final WebRTCTransportStats? _stats;
   final Queue<Uint8List> _queue = Queue<Uint8List>();
   final Completer<void> _doneCompleter = Completer<void>();
+  final Stopwatch _sampleClock = Stopwatch();
   Completer<void>? _bufferedAmountLow;
   bool _isClosed = false;
   bool _pumping = false;
 
-  WebRTCStreamSink(this._dataChannel) {
+  WebRTCStreamSink(this._dataChannel, {WebRTCTransportStats? stats})
+    : _stats = stats {
     _dataChannel.bufferedAmountLowThreshold = lowWaterMark;
     _dataChannel.onBufferedAmountLow = (_) {
       _bufferedAmountLow?.complete();
@@ -150,6 +174,7 @@ class WebRTCStreamSink implements StreamSink<List<int>> {
       throw StateError('WebRTC DataChannel is not open');
     }
     _queue.add(data is Uint8List ? data : Uint8List.fromList(data));
+    _stats?.recordQueueDepth(_queue.length);
     _pump();
   }
 
@@ -161,23 +186,30 @@ class WebRTCStreamSink implements StreamSink<List<int>> {
         if (_dataChannel.state != RTCDataChannelState.RTCDataChannelOpen) {
           // The channel died with data still queued; the transport connector's
           // state listener tears the connection down, so just stop writing.
-          _queue.clear();
+          _dropQueue();
           break;
+        }
+        if (_stats != null &&
+            (!_sampleClock.isRunning ||
+                _sampleClock.elapsed >= _bufferedAmountSampleInterval)) {
+          await _sampleBufferedAmounts();
         }
         if ((_dataChannel.bufferedAmount ?? 0) > highWaterMark) {
           await _waitForDrain();
           continue;
         }
-        // Awaiting each send keeps sends ordered and refreshes bufferedAmount
-        // (the native implementation updates it from the send response).
-        await _dataChannel.send(
-          RTCDataChannelMessage.fromBinary(_queue.removeFirst()),
-        );
+        // Awaiting each send keeps sends ordered. Note this only confirms the
+        // platform round trip on native, not that libwebrtc accepted the data.
+        final message = _queue.removeFirst();
+        await _dataChannel.send(RTCDataChannelMessage.fromBinary(message));
+        _stats?.recordSend(message.length);
       }
     } catch (_) {
       // A failed send means the channel is gone; drop what's left and let the
-      // connector's done future surface the disconnect.
-      _queue.clear();
+      // connector's done future surface the disconnect. Native never gets here
+      // — the darwin plugin swallows send failures.
+      _stats?.sendErrors++;
+      _dropQueue();
     } finally {
       _pumping = false;
       if (_isClosed && !_doneCompleter.isCompleted) {
@@ -186,9 +218,42 @@ class WebRTCStreamSink implements StreamSink<List<int>> {
     }
   }
 
-  Future<void> _waitForDrain() {
+  void _dropQueue() {
+    if (_stats != null) {
+      for (final chunk in _queue) {
+        _stats.queuedBytesDroppedOnClose += chunk.length;
+      }
+    }
+    _queue.clear();
+  }
+
+  /// Compares the cached [RTCDataChannel.bufferedAmount] against a live read.
+  ///
+  /// On web these always agree. On native the cache is refreshed by an async
+  /// platform event, so a positive divergence is the amount of buffered data
+  /// the pump is blind to. Note the read itself refreshes the native cache as a
+  /// side effect, which is why it is throttled rather than run every send.
+  Future<void> _sampleBufferedAmounts() async {
+    final cached = _dataChannel.bufferedAmount ?? 0;
+    try {
+      final live = await _dataChannel.getBufferedAmount();
+      _stats?.recordBufferedAmounts(cached: cached, live: live);
+    } catch (_) {
+      // Channel closed or the platform refused the query; not worth surfacing.
+    }
+    _sampleClock
+      ..reset()
+      ..start();
+  }
+
+  Future<void> _waitForDrain() async {
+    _stats?.drainWaits++;
     final completer = _bufferedAmountLow ??= Completer<void>();
-    return Future.any([completer.future, Future.delayed(_drainPollInterval)]);
+    final drainedViaPoll = await Future.any([
+      completer.future.then((_) => false),
+      Future.delayed(_drainPollInterval, () => true),
+    ]);
+    if (drainedViaPoll) _stats?.drainPollFallbacks++;
   }
 
   @override
