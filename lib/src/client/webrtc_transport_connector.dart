@@ -30,12 +30,19 @@ import 'webrtc_transport_stats.dart';
 /// This allows gRPC to run over WebRTC by using the existing HTTP/2
 /// infrastructure but routing the bytes through a WebRTC DataChannel
 /// instead of a TCP socket.
+///
+/// A data channel carries exactly one HTTP/2 connection: [connect] succeeds at
+/// most once per connector. A reconnect would send a second client preface
+/// mid-session on the same channel and take over its incoming bytes, leaving
+/// the first connection's streams hung. So a second [connect] instead closes
+/// the channel and throws, and whoever owns the channel replaces it.
 class WebRTCTransportConnector implements ClientTransportConnector {
   final RTCDataChannel _dataChannel;
   final String _authority;
   final WebRTCTransportStats? _stats;
   final Completer<void> _doneCompleter = Completer<void>();
   bool _isShutdown = false;
+  StreamController<List<int>>? _incoming;
 
   /// Creates a WebRTC transport connector.
   ///
@@ -49,8 +56,9 @@ class WebRTCTransportConnector implements ClientTransportConnector {
   }) : _stats = stats {
     // Listen for DataChannel closure
     _dataChannel.onDataChannelState = (RTCDataChannelState state) {
-      if (state == RTCDataChannelState.RTCDataChannelClosed &&
-          !_doneCompleter.isCompleted) {
+      if (state != RTCDataChannelState.RTCDataChannelClosed) return;
+      _closeIncoming();
+      if (!_doneCompleter.isCompleted) {
         _doneCompleter.complete();
       }
     };
@@ -72,8 +80,16 @@ class WebRTCTransportConnector implements ClientTransportConnector {
       throw StateError('WebRTC DataChannel is not open');
     }
 
+    if (_incoming != null) {
+      // Closing the channel is what prompts its owner to replace it.
+      shutdown();
+      throw StateError(
+        'WebRTC DataChannel already carried an HTTP/2 connection',
+      );
+    }
+
     // Create streams that bridge WebRTC DataChannel to HTTP/2
-    final incomingController = StreamController<List<int>>();
+    final incomingController = _incoming = StreamController<List<int>>();
     final outgoingSink = WebRTCStreamSink(_dataChannel, stats: _stats);
     final sinceConnect = Stopwatch()..start();
 
@@ -106,10 +122,18 @@ class WebRTCTransportConnector implements ClientTransportConnector {
     _isShutdown = true;
 
     _dataChannel.close();
+    _closeIncoming();
 
     if (!_doneCompleter.isCompleted) {
       _doneCompleter.complete();
     }
+  }
+
+  /// Ends the HTTP/2 connection's input so its in-flight streams fail now
+  /// instead of waiting on bytes a closed channel will never deliver.
+  void _closeIncoming() {
+    final incoming = _incoming;
+    if (incoming != null && !incoming.isClosed) incoming.close();
   }
 }
 
