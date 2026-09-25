@@ -1,0 +1,68 @@
+# CI for Carbon's fork. dart.yml only covers master; Carbon work lands on
+# webrtc_client_dev, whose WebRTC transport needs Flutter to build.
+name: Carbon
+
+on:
+  push:
+    branches: [webrtc_client_dev]
+  pull_request:
+    branches: [webrtc_client_dev]
+
+env:
+  # Match the Operator app's Flutter version.
+  FLUTTER_VERSION: 3.41.6
+  # grpc does not depend on flutter_webrtc; consumers supply it. Add it here
+  # only so the WebRTC code can be analyzed and tested.
+  FLUTTER_WEBRTC: ^1.4.1
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Report version
+        run: flutter --version
+      - name: Install dependencies
+        run: flutter pub add flutter_webrtc:${{ env.FLUTTER_WEBRTC }}
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze code
+        run: flutter analyze --no-pub --fatal-infos .
+
+  test:
+    needs: analyze
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [vm, chrome]
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install envoy
+        if: ${{ matrix.platform == 'chrome' }}
+        run: |
+          ENVOY_VERSION="1.19.0"
+          wget https://archive.tetratelabs.io/envoy/download/v${ENVOY_VERSION}/envoy-v${ENVOY_VERSION}-linux-amd64.tar.xz
+          tar -xf envoy-v${ENVOY_VERSION}-linux-amd64.tar.xz
+          chmod +x envoy-v${ENVOY_VERSION}-linux-amd64/bin/envoy
+          sudo mv envoy-v${ENVOY_VERSION}-linux-amd64/bin/envoy /usr/bin/envoy
+          rm -rf envoy-v${ENVOY_VERSION}-linux-amd64.tar.xz envoy-v${ENVOY_VERSION}-linux-amd64
+      - name: Install dependencies
+        run: flutter pub add flutter_webrtc:${{ env.FLUTTER_WEBRTC }}
+      # Tests tagged flutter import Flutter plugins and cannot load under dart test.
+      - name: Run tests
+        run: dart test --platform ${{ matrix.platform }} --exclude-tags flutter
+      - name: Run vmservice test
+        if: ${{ matrix.platform == 'vm' }}
+        run: dart run --enable-vm-service --timeline-streams=Dart test/timeline_test.dart
+      - name: Run Flutter tests
+        if: ${{ matrix.platform == 'vm' }}
+        run: flutter test --tags flutter

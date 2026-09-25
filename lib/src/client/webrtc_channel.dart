@@ -15,54 +15,51 @@
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
-import 'call.dart';
 import 'channel.dart';
 import 'connection.dart';
 import 'http2_connection.dart';
 import 'options.dart';
 import 'webrtc_transport_connector.dart';
 import 'webrtc_transport_stats.dart';
-import 'method.dart';
-import '../shared/status.dart';
 
 /// A gRPC client channel that uses WebRTC DataChannel as the underlying
 /// transport for HTTP/2 connections.
-/// 
+///
 /// This channel leverages the existing HTTP/2 infrastructure in the gRPC
 /// library but routes all communication through a WebRTC DataChannel instead
 /// of a TCP socket. This enables peer-to-peer gRPC communication or tunneling
 /// gRPC over WebRTC connections while maintaining full HTTP/2 compatibility.
-/// 
+///
 /// Example usage:
 /// ```dart
 /// // Assume you have a WebRTC DataChannel set up
 /// final dataChannel = ...;
-/// 
+///
 /// final channel = ClientChannel(
 ///   dataChannel,
 ///   authority: 'peer-service-name',
 ///   options: ChannelOptions(),
 /// );
-/// 
+///
 /// final client = MyServiceClient(channel);
 /// final response = await client.myMethod(request);
 /// ```
-/// 
+///
 /// ## Important Requirements
-/// 
+///
 /// 1. **Ordered Delivery**: The WebRTC DataChannel must be configured with
 ///    `ordered: true` to ensure HTTP/2 frames arrive in the correct order.
-/// 
+///
 /// 2. **Reliable Transport**: Use reliable delivery mode (no packet loss)
 ///    as HTTP/2 expects a reliable transport layer.
-/// 
+///
 /// 3. **Binary Data**: The DataChannel must support binary data transmission.
-/// 
+///
 /// 4. **Open State**: The DataChannel should be in the 'open' state before
 ///    creating the channel.
-/// 
+///
 /// ## Benefits over Raw WebRTC Transport
-/// 
+///
 /// - Full HTTP/2 multiplexing support
 /// - Proper gRPC metadata handling
 /// - Stream flow control
@@ -82,7 +79,7 @@ class ClientChannel extends ClientChannelBase {
   WebRTCTransportStats get stats => _stats;
 
   /// Creates a new HTTP/2 over WebRTC client channel.
-  /// 
+  ///
   /// [dataChannel] - The pre-established WebRTC DataChannel to use for transport
   /// [authority] - The authority (service name) for the gRPC service
   /// [options] - Channel options for configuration
@@ -92,15 +89,18 @@ class ClientChannel extends ClientChannelBase {
     required String authority,
     ChannelOptions options = const ChannelOptions(),
     super.channelShutdownHandler,
-  })  : _authority = authority,
-        _options = options;
+  }) : _authority = authority,
+       _options = options;
 
   @override
   ClientConnection createConnection() {
     // Create a WebRTC transport connector
-    final transportConnector =
-        WebRTCTransportConnector(_dataChannel, _authority, stats: _stats);
-    
+    final transportConnector = WebRTCTransportConnector(
+      _dataChannel,
+      _authority,
+      stats: _stats,
+    );
+
     // Use the existing HTTP/2 connection implementation with our WebRTC transport
     return Http2ClientConnection.fromClientTransportConnector(
       transportConnector,

@@ -42,6 +42,8 @@ class WebRTCTransportConnector implements ClientTransportConnector {
   final WebRTCTransportStats? _stats;
   final Completer<void> _doneCompleter = Completer<void>();
   bool _isShutdown = false;
+  // Closed in shutdown/terminate.
+  // ignore: close_sinks
   StreamController<List<int>>? _incoming;
 
   /// Creates a WebRTC transport connector.
@@ -89,6 +91,8 @@ class WebRTCTransportConnector implements ClientTransportConnector {
     }
 
     // Create streams that bridge WebRTC DataChannel to HTTP/2
+    // Closed in shutdown/terminate via _incoming.
+    // ignore: close_sinks
     final incomingController = _incoming = StreamController<List<int>>();
     final outgoingSink = WebRTCStreamSink(_dataChannel, stats: _stats);
     final sinceConnect = Stopwatch()..start();
