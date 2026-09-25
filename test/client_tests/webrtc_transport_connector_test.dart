@@ -16,7 +16,9 @@
 // Needs flutter_webrtc, which this package does not depend on, so it cannot run
 // under `dart test` here. Run it through a consumer that resolves both, e.g.
 // from the Operator app: `fvm flutter test ../carbon-grpc-dart/test/client_tests/webrtc_transport_connector_test.dart`.
+// CI (carbon.yml) adds flutter_webrtc temporarily and runs it via the flutter tag.
 @TestOn('vm')
+@Tags(['flutter'])
 library;
 
 import 'dart:async';
