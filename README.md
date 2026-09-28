@@ -25,3 +25,5 @@ For complete documentation, see [Dart gRPC](https://grpc.io/docs/languages/dart)
 If you experience problems or have feature requests, [open an issue](https://github.com/dart-lang/grpc-dart/issues/new).
 
 Note that we have limited bandwidth to accept PRs, and that all PRs require signing the [EasyCLA](https://lfcla.com).
+
+<!-- test PR: verifies CI on webrtc_client_dev -->
