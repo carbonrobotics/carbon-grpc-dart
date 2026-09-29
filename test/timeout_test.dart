@@ -17,6 +17,7 @@ import 'dart:async';
 
 import 'package:grpc/grpc.dart';
 import 'package:http2/transport.dart';
+import 'package:mockito/mockito.dart';
 import 'package:test/test.dart';
 
 import 'src/client_utils.dart';
@@ -99,6 +100,62 @@ void main() {
         serverHandlers: [handleRequest],
       );
     });
+
+    test(
+      'Calls past their deadline leave the stream for the server to end',
+      () async {
+        final serverDone = Completer<void>();
+        void handleRequest(StreamMessage message) {
+          validateDataMessage(message);
+          // The reply is already in flight when the client's timer fires.
+          Future.delayed(Duration(milliseconds: 20), () {
+            harness
+              ..sendResponseHeader()
+              ..sendResponseTrailer();
+            serverDone.complete();
+          });
+        }
+
+        final timeout = Duration(microseconds: 1);
+        await harness.runFailureTest(
+          clientCall: harness.client.unary(
+            dummyValue,
+            options: CallOptions(timeout: timeout),
+          ),
+          expectedException: GrpcError.deadlineExceeded('Deadline exceeded'),
+          expectedPath: '/Test/Unary',
+          expectedTimeout: timeout,
+          serverHandlers: [handleRequest],
+        );
+        await serverDone.future;
+        await Future.delayed(Duration.zero);
+        verifyNever(harness.stream.terminate());
+      },
+    );
+
+    test(
+      'Calls past their deadline reset a stream the server never ends',
+      () async {
+        final grace = ClientCall.deadlineGrace;
+        ClientCall.deadlineGrace = Duration(milliseconds: 20);
+        addTearDown(() => ClientCall.deadlineGrace = grace);
+
+        final timeout = Duration(microseconds: 1);
+        await harness.runFailureTest(
+          clientCall: harness.client.unary(
+            dummyValue,
+            options: CallOptions(timeout: timeout),
+          ),
+          expectedException: GrpcError.deadlineExceeded('Deadline exceeded'),
+          expectedPath: '/Test/Unary',
+          expectedTimeout: timeout,
+          serverHandlers: [validateDataMessage],
+        );
+        verifyNever(harness.stream.terminate());
+        await Future.delayed(Duration(milliseconds: 50));
+        verify(harness.stream.terminate()).called(1);
+      },
+    );
   });
 
   group('Server:', () {
