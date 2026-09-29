@@ -16,8 +16,6 @@
 import 'dart:async';
 import 'dart:developer';
 
-import 'package:meta/meta.dart';
-
 import '../shared/codec.dart';
 import '../shared/message.dart';
 import '../shared/profiler.dart';
@@ -208,25 +206,6 @@ class ClientCall<Q, R> implements Response {
   bool isCancelled = false;
   Timer? _timeoutTimer;
 
-  /// How long a call whose client-side deadline has passed leaves its HTTP/2
-  /// stream open for the server to end before the client resets it.
-  ///
-  /// The server received the same deadline in `grpc-timeout` and ends the
-  /// stream itself, so the reset is normally never sent. Resetting at the
-  /// deadline instead races the server's final frames: package:http2 treats a
-  /// HEADERS frame for a stream it has already reset as a connection error and
-  /// fails every call sharing the connection.
-  ///
-  /// Mutable so tests can shorten it.
-  @visibleForTesting
-  static Duration deadlineGrace = const Duration(seconds: 5);
-
-  /// Armed by [_onTimedOut]; resets the stream if the server has not ended it.
-  Timer? _deadlineGraceTimer;
-
-  /// Past the deadline: the caller has its error, the stream is draining.
-  bool get _isDraining => _deadlineGraceTimer != null;
-
   final TimelineTask? _requestTimeline;
   TimelineTask? _responseTimeline;
 
@@ -302,6 +281,8 @@ class ClientCall<Q, R> implements Response {
   }
 
   void _sendRequest(ClientConnection connection, Map<String, String> metadata) {
+    // A metadata provider may resolve after the call timed out or was cancelled.
+    if (isCancelled) return;
     late final GrpcTransportStream stream;
     try {
       stream = connection.makeRequest(
@@ -349,24 +330,7 @@ class ClientCall<Q, R> implements Response {
     final error = GrpcError.deadlineExceeded('Deadline exceeded');
     _finishTimelineWithError(error, _requestTimeline);
     _responses.addErrorIfNotClosed(error);
-    if (_stream == null) {
-      // Nothing on the wire yet, so no server-side deadline to wait for.
-      _safeTerminate();
-      return;
-    }
-    // Finish the call for the caller but leave the stream to the server; see
-    // [deadlineGrace]. The response subscription stays live: cancelling it
-    // makes package:http2 reset a half-closed stream too.
-    _deadlineGraceTimer = Timer(deadlineGrace, _safeTerminate);
-    _requestSubscription?.cancel();
-    _stream!.outgoingMessages.close();
-    _responses.close();
-    if (!_headers.isCompleted) {
-      _headers.complete({});
-    }
-    if (!_trailers.isCompleted) {
-      _trailers.complete({});
-    }
+    _safeTerminate();
   }
 
   /// Subscribe to incoming response messages, once [_stream] is available, and
@@ -398,7 +362,6 @@ class ClientCall<Q, R> implements Response {
     _finishTimelineWithError(error, _responseTimeline);
     _responses.addErrorIfNotClosed(error);
     _timeoutTimer?.cancel();
-    _deadlineGraceTimer?.cancel();
     _requestSubscription?.cancel();
     _responseSubscription!.cancel();
     _responses.close();
@@ -416,7 +379,6 @@ class ClientCall<Q, R> implements Response {
   /// Data handler for responses coming from the server. Handles header/trailer
   /// metadata, and forwards response objects to [_responses].
   void _onResponseData(GrpcMessage data) {
-    if (_isDraining) return;
     if (data is GrpcData) {
       if (!_headers.isCompleted) {
         _responseError(GrpcError.unimplemented('Received data before headers'));
@@ -485,7 +447,6 @@ class ClientCall<Q, R> implements Response {
   /// Handles closure of the response stream. Verifies that server has sent
   /// response messages and header/trailer metadata, as necessary.
   void _onResponseDone() {
-    _deadlineGraceTimer?.cancel();
     if (!_headers.isCompleted) {
       _responseError(GrpcError.unavailable('Did not receive anything'));
       return;
@@ -552,11 +513,6 @@ class ClientCall<Q, R> implements Response {
     // event has been delivered, and it's the caller of this function that is
     // reading from responses as well, so we might end up deadlocked.
     _responses.close();
-    if (_deadlineGraceTimer?.isActive ?? false) {
-      // Reached via _responses.onCancel once the deadline error is delivered.
-      // The grace timer finishes the teardown if the server does not.
-      return;
-    }
     _stream?.terminate();
     final futures = <Future>[];
     if (_requestSubscription != null) {

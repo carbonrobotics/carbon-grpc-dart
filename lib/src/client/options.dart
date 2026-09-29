@@ -32,6 +32,9 @@ const defaultIdleTimeout = Duration(minutes: 5);
 /// connection after 50 minutes. This will avoid one failed RPC call.
 const defaultConnectionTimeOut = Duration(minutes: 50);
 
+/// See [ChannelOptions.resetStreamGrace].
+const defaultResetStreamGrace = Duration(seconds: 5);
+
 typedef BackoffStrategy = Duration Function(Duration? lastBackoff);
 
 // Backoff algorithm from https://github.com/grpc/grpc/blob/master/doc/connection-backoff.md
@@ -67,6 +70,19 @@ class ChannelOptions {
   final ClientKeepAliveOptions keepAlive;
   final Proxy? proxy;
 
+  /// How long a terminated call leaves its HTTP/2 stream open for the server
+  /// to end before the client resets it.
+  ///
+  /// A call ends its stream when it is cancelled, fails or passes its
+  /// deadline. Resetting the stream right away races the server's final
+  /// frames: package:http2 treats a HEADERS frame for a stream it has already
+  /// reset as a connection error and fails every call sharing the connection.
+  /// The server received the same deadline in `grpc-timeout` and ends a
+  /// timed-out stream itself, so within the grace no reset is normally needed.
+  ///
+  /// [Duration.zero] resets the stream immediately.
+  final Duration resetStreamGrace;
+
   const ChannelOptions({
     this.credentials = const ChannelCredentials.secure(),
     this.idleTimeout = defaultIdleTimeout,
@@ -77,5 +93,6 @@ class ChannelOptions {
     this.codecRegistry,
     this.keepAlive = const ClientKeepAliveOptions(),
     this.proxy,
+    this.resetStreamGrace = defaultResetStreamGrace,
   }) : _userAgent = userAgent;
 }

@@ -21,26 +21,52 @@ import '../../shared/codec.dart';
 import '../../shared/codec_registry.dart';
 import '../../shared/message.dart';
 import '../../shared/streams.dart';
+import '../options.dart';
 import 'transport.dart';
 
 class Http2TransportStream extends GrpcTransportStream {
   final TransportStream _transportStream;
-  @override
-  final Stream<GrpcMessage> incomingMessages;
+  final Stream<GrpcMessage> _decodedMessages;
+  final StreamController<GrpcMessage> _incomingMessages = StreamController();
   final StreamController<List<int>> _outgoingMessages = StreamController();
   final ErrorHandler _onError;
 
+  /// See [ChannelOptions.resetStreamGrace].
+  final Duration _resetGrace;
+
+  StreamSubscription<GrpcMessage>? _incomingSubscription;
+  bool _incomingDone = false;
+  Future<void>? _terminated;
+  Timer? _resetTimer;
+  final _done = Completer<void>();
+
+  @override
+  Stream<GrpcMessage> get incomingMessages => _incomingMessages.stream;
+
   @override
   StreamSink<List<int>> get outgoingMessages => _outgoingMessages.sink;
+
+  /// Completes once the server has ended the stream or it has been reset.
+  Future<void> get done => _done.future;
+
+  /// Whether [terminate] has been called.
+  bool get isTerminated => _terminated != null;
 
   Http2TransportStream(
     this._transportStream,
     this._onError,
     CodecRegistry? codecRegistry,
-    Codec? compression,
-  ) : incomingMessages = _transportStream.incomingMessages
-          .transform(GrpcHttpDecoder(forResponse: true))
-          .transform(grpcDecompressor(codecRegistry: codecRegistry)) {
+    Codec? compression, {
+    Duration resetGrace = Duration.zero,
+  }) : _resetGrace = resetGrace,
+       _decodedMessages = _transportStream.incomingMessages
+           .transform(GrpcHttpDecoder(forResponse: true))
+           .transform(grpcDecompressor(codecRegistry: codecRegistry)) {
+    // The underlying subscription is owned here rather than handed to the
+    // caller: cancelling it makes package:http2 reset a half-closed stream.
+    _incomingMessages.onListen = _listenIncoming;
+    _incomingMessages.onPause = () => _incomingSubscription?.pause();
+    _incomingMessages.onResume = () => _incomingSubscription?.resume();
     _outgoingMessages.stream
         .map((payload) => frame(payload, compression))
         .map<StreamMessage>((bytes) => DataStreamMessage(bytes))
@@ -53,9 +79,71 @@ class Http2TransportStream extends GrpcTransportStream {
         );
   }
 
+  void _listenIncoming() {
+    _incomingSubscription ??= _decodedMessages.listen(
+      _onIncomingData,
+      onError: _onIncomingError,
+      onDone: _onIncomingDone,
+      cancelOnError: true,
+    );
+  }
+
+  void _onIncomingData(GrpcMessage message) {
+    if (isTerminated) return; // Draining: the caller is gone.
+    _incomingMessages.add(message);
+  }
+
+  void _onIncomingError(Object error, StackTrace stackTrace) {
+    if (!isTerminated) _incomingMessages.addError(error, stackTrace);
+    _onIncomingDone();
+  }
+
+  void _onIncomingDone() {
+    if (_incomingDone) return;
+    _incomingDone = true;
+    _resetTimer?.cancel();
+    _resetTimer = null;
+    _incomingMessages.close();
+    _done.complete();
+  }
+
+  /// Ends this stream without racing the server's final frames.
+  ///
+  /// Closes the request side and leaves the stream open for the server to end
+  /// it. A server that received `grpc-timeout` ends a timed-out stream itself,
+  /// so no RST_STREAM is sent in the common case. The stream is only reset if
+  /// the server has not ended it within [ChannelOptions.resetStreamGrace].
+  ///
+  /// Resetting right away instead races the server's trailers: package:http2
+  /// treats a HEADERS frame for a stream it has already reset as a connection
+  /// error and fails every call sharing the connection.
+  ///
+  /// Frames that arrive while draining are discarded. Calling this more than
+  /// once has no further effect.
   @override
-  Future<void> terminate() async {
+  Future<void> terminate() => _terminated ??= _drain();
+
+  Future<void> _drain() async {
+    if (!_incomingDone) {
+      // The server's END_STREAM has to be observed even if the caller paused
+      // or never listened.
+      _listenIncoming();
+      _incomingMessages.onPause = null;
+      _incomingMessages.onResume = null;
+      while (_incomingSubscription!.isPaused) {
+        _incomingSubscription!.resume();
+      }
+      _resetTimer = Timer(_resetGrace, reset);
+    }
     await _outgoingMessages.close();
+  }
+
+  /// Resets the stream now, skipping any remaining grace.
+  void reset() {
+    _resetTimer?.cancel();
+    _resetTimer = null;
+    if (_incomingDone) return;
+    _listenIncoming(); // Observe the reset so [done] completes.
     _transportStream.terminate();
   }
 }
