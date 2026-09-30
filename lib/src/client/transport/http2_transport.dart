@@ -74,25 +74,30 @@ class Http2TransportStream extends GrpcTransportStream {
     _incomingMessages.onListen = _listenIncoming;
     _incomingMessages.onPause = () => _incomingSubscription?.pause();
     _incomingMessages.onResume = () => _incomingSubscription?.resume();
-    // package:http2 closes its sink when a stream terminates abnormally, so
-    // nothing may reach it after.
     final sink = _transportStream.outgoingMessages;
     _outgoingMessages.stream
         .map((payload) => frame(payload, compression))
         .map<StreamMessage>((bytes) => DataStreamMessage(bytes))
         .handleError(_onError)
         .listen(
-          (message) {
-            if (!_sinkClosed) sink.add(message);
-          },
-          onError: (Object error, StackTrace stackTrace) {
-            if (!_sinkClosed) sink.addError(error, stackTrace);
-          },
-          onDone: () {
-            if (!_sinkClosed) sink.close();
-          },
+          (message) => _toSink(() => sink.add(message)),
+          onError: (Object error, StackTrace stackTrace) =>
+              _toSink(() => sink.addError(error, stackTrace)),
+          onDone: () => _toSink(sink.close),
           cancelOnError: true,
         );
+  }
+
+  /// package:http2 closes the sink when the stream terminates abnormally,
+  /// before it reports a reset by the server. Frames for a closed sink are
+  /// dropped: the stream is gone either way.
+  void _toSink(void Function() write) {
+    if (_sinkClosed) return;
+    try {
+      write();
+    } on StateError {
+      _sinkClosed = true;
+    }
   }
 
   void _listenIncoming() {

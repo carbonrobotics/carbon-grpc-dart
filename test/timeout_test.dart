@@ -262,6 +262,19 @@ void main() {
         provider.complete();
         await expectLater(requests.done, completes);
       });
+
+      test('cancel the request stream when a provider fails', () async {
+        final requests = StreamController<int>();
+        final call = harness.client.clientStreaming(
+          requests.stream,
+          options: CallOptions(providers: [(metadata, uri) => throw 'boom']),
+        );
+        await harness.expectThrows(
+          call,
+          GrpcError.unavailable('Error making call: boom'),
+        );
+        await expectLater(requests.done, completes);
+      });
     });
   });
 

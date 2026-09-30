@@ -31,7 +31,7 @@ import 'web_streams.dart';
 
 const _contentTypeKey = 'Content-Type';
 
-class XhrTransportStream implements GrpcTransportStream {
+class XhrTransportStream extends GrpcTransportStream {
   final IXMLHttpRequest _request;
   final ErrorHandler _onError;
   final Function(XhrTransportStream stream) _onDone;
@@ -159,10 +159,6 @@ class XhrTransportStream implements GrpcTransportStream {
     _close();
     _request.abort();
   }
-
-  // An aborted XHR needs no grace.
-  @override
-  Future<void> cancel() => terminate();
 }
 
 // XMLHttpRequest is an extension type and can't be extended or implemented.

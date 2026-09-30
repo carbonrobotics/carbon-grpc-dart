@@ -288,6 +288,22 @@ void main() {
     expect(sent, isEmpty);
   });
 
+  test(
+    'request frames after the server reset the stream are dropped',
+    () async {
+      final errors = <Object>[];
+      transport.incomingMessages.listen(null, onError: errors.add);
+      // package:http2 closes the sink before it reports the reset.
+      fromClient.close();
+      transport.outgoingMessages.add([1, 2, 3]);
+      toClient.addError(StreamTransportException('RST_STREAM'));
+      await Future.delayed(Duration.zero);
+
+      expect(errors, hasLength(1));
+      expect(transport.done, completes);
+    },
+  );
+
   group('skipGrace', () {
     test('resets a terminated stream now', () async {
       await transport.terminate();
