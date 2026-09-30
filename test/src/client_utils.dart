@@ -82,6 +82,12 @@ class FakeChannelOptions implements ChannelOptions {
 
   @override
   Proxy? get proxy => null;
+
+  @override
+  Duration resetStreamGrace = defaultResetStreamGrace;
+
+  @override
+  Duration cancelStreamGrace = defaultCancelStreamGrace;
 }
 
 class FakeChannel extends ClientChannel {

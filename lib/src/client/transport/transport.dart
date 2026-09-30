@@ -27,4 +27,11 @@ abstract class GrpcTransportStream {
   StreamSink<List<int>> get outgoingMessages;
 
   Future<void> terminate();
+
+  /// [terminate] for a call the client cancelled.
+  ///
+  /// A transport that leaves a terminated stream for the server to end may
+  /// wait less here: the server does not know about the cancellation and
+  /// would otherwise keep sending for the whole grace.
+  Future<void> cancel() => terminate();
 }

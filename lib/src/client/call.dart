@@ -281,6 +281,8 @@ class ClientCall<Q, R> implements Response {
   }
 
   void _sendRequest(ClientConnection connection, Map<String, String> metadata) {
+    // A metadata provider may resolve after the call timed out or was cancelled.
+    if (isCancelled) return;
     late final GrpcTransportStream stream;
     try {
       stream = connection.makeRequest(
@@ -363,7 +365,8 @@ class ClientCall<Q, R> implements Response {
     _requestSubscription?.cancel();
     _responseSubscription!.cancel();
     _responses.close();
-    _stream!.terminate();
+    // The server does not know the client failed the call.
+    _stream!.cancel();
   }
 
   /// If there's an error status then process it as a response error.
@@ -483,7 +486,8 @@ class ClientCall<Q, R> implements Response {
     _responses.close();
     _requestSubscription?.cancel();
     _responseSubscription?.cancel();
-    _stream!.terminate();
+    // The server does not know the client failed the call.
+    _stream!.cancel();
   }
 
   Stream<R> get response => _responses.stream;
@@ -501,29 +505,36 @@ class ClientCall<Q, R> implements Response {
       _responses.addError(error);
       _finishTimelineWithError(error, _requestTimeline);
     }
-    return _terminate();
+    return _terminate(cancelled: true);
   }
 
-  Future<void> _terminate() async {
+  /// [cancelled] is true for an explicit client cancel, which the server does
+  /// not know about. A deadline was sent to the server as `grpc-timeout`, so
+  /// that path lets the transport wait for it to end the stream.
+  Future<void> _terminate({bool cancelled = false}) async {
     isCancelled = true;
     _timeoutTimer?.cancel();
     // Don't await _responses.close() here. It'll only complete once the done
     // event has been delivered, and it's the caller of this function that is
     // reading from responses as well, so we might end up deadlocked.
     _responses.close();
-    _stream?.terminate();
-    final futures = <Future>[];
-    if (_requestSubscription != null) {
-      futures.add(_requestSubscription!.cancel());
-    }
-    if (_responseSubscription != null) {
-      futures.add(_responseSubscription!.cancel());
+    if (cancelled) {
+      _stream?.cancel();
+    } else {
+      _stream?.terminate();
     }
     if (!_headers.isCompleted) {
       _headers.complete({});
     }
     if (!_trailers.isCompleted) {
       _trailers.complete({});
+    }
+    final futures = <Future>[];
+    if (_requestSubscription != null) {
+      futures.add(_requestSubscription!.cancel());
+    }
+    if (_responseSubscription != null) {
+      futures.add(_responseSubscription!.cancel());
     }
     await Future.wait(futures);
   }

@@ -31,7 +31,7 @@ import 'web_streams.dart';
 
 const _contentTypeKey = 'Content-Type';
 
-class XhrTransportStream implements GrpcTransportStream {
+class XhrTransportStream extends GrpcTransportStream {
   final IXMLHttpRequest _request;
   final ErrorHandler _onError;
   final Function(XhrTransportStream stream) _onDone;

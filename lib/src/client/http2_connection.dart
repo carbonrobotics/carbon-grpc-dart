@@ -50,6 +50,7 @@ class Http2ClientConnection implements connection.ClientConnection {
   void Function(connection.ConnectionState)? onStateChanged;
 
   final _pendingCalls = <ClientCall>[];
+  final _streams = <Http2TransportStream>{};
 
   final ClientTransportConnector _transportConnector;
   ClientTransportConnection? _transportConnection;
@@ -198,13 +199,17 @@ class Http2ClientConnection implements connection.ClientConnection {
           (callOptions?.metadata ?? const {})['grpc-accept-encoding'] ??
           options.codecRegistry?.supportedEncodings,
     );
-    final stream = _transportConnection!.makeRequest(headers);
-    return Http2TransportStream(
-      stream,
+    final stream = Http2TransportStream(
+      _transportConnection!.makeRequest(headers),
       onRequestFailure,
       options.codecRegistry,
       compressionCodec,
+      resetGrace: options.resetStreamGrace,
+      cancelGrace: options.cancelStreamGrace,
     );
+    _streams.add(stream);
+    stream.done.whenComplete(() => _streams.remove(stream));
+    return stream;
   }
 
   void _startCall(ClientCall call) {
@@ -225,6 +230,12 @@ class Http2ClientConnection implements connection.ClientConnection {
   Future<void> shutdown() async {
     if (_state == ConnectionState.shutdown) return;
     _setShutdownState();
+    // Draining streams would otherwise hold finish() for their grace. Calls
+    // still running keep theirs: resetting them at once would race their
+    // trailers and could fail the other calls finish() is waiting for.
+    for (final stream in _streams.toList()) {
+      if (stream.isTerminated) stream.reset();
+    }
     await _transportConnection?.finish();
     keepAliveManager?.onTransportTermination();
   }

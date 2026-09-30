@@ -32,6 +32,12 @@ const defaultIdleTimeout = Duration(minutes: 5);
 /// connection after 50 minutes. This will avoid one failed RPC call.
 const defaultConnectionTimeOut = Duration(minutes: 50);
 
+/// See [ChannelOptions.resetStreamGrace].
+const defaultResetStreamGrace = Duration(seconds: 5);
+
+/// See [ChannelOptions.cancelStreamGrace].
+const defaultCancelStreamGrace = Duration(milliseconds: 500);
+
 typedef BackoffStrategy = Duration Function(Duration? lastBackoff);
 
 // Backoff algorithm from https://github.com/grpc/grpc/blob/master/doc/connection-backoff.md
@@ -67,6 +73,31 @@ class ChannelOptions {
   final ClientKeepAliveOptions keepAlive;
   final Proxy? proxy;
 
+  /// How long a call that passed its deadline leaves its HTTP/2 stream open
+  /// for the server to end before the client resets it.
+  ///
+  /// Resetting the stream right away races the server's final frames:
+  /// package:http2 treats a HEADERS frame for a stream it has already reset as
+  /// a connection error and fails every call sharing the connection. The
+  /// server received the same deadline in `grpc-timeout` and ends a timed-out
+  /// stream itself, so within the grace no reset is normally needed.
+  ///
+  /// Every other way a call ends uses [cancelStreamGrace].
+  ///
+  /// [Duration.zero] resets the stream immediately.
+  final Duration resetStreamGrace;
+
+  /// [resetStreamGrace] for a call the client ended itself: a cancel, a
+  /// request error or a response the client rejected.
+  ///
+  /// The server does not learn of any of these until the reset, so a
+  /// server-streaming call keeps receiving data for the whole grace. This
+  /// grace only needs to cover trailers already in flight, so it is much
+  /// shorter than [resetStreamGrace].
+  ///
+  /// [Duration.zero] resets the stream immediately.
+  final Duration cancelStreamGrace;
+
   const ChannelOptions({
     this.credentials = const ChannelCredentials.secure(),
     this.idleTimeout = defaultIdleTimeout,
@@ -77,5 +108,7 @@ class ChannelOptions {
     this.codecRegistry,
     this.keepAlive = const ClientKeepAliveOptions(),
     this.proxy,
+    this.resetStreamGrace = defaultResetStreamGrace,
+    this.cancelStreamGrace = defaultCancelStreamGrace,
   }) : _userAgent = userAgent;
 }

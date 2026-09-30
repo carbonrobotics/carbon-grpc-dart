@@ -23,6 +23,7 @@ import 'package:grpc/src/client/http2_connection.dart';
 import 'package:grpc/src/generated/google/rpc/status.pb.dart';
 import 'package:grpc/src/shared/status.dart';
 import 'package:http2/transport.dart';
+import 'package:mockito/mockito.dart';
 import 'package:protobuf/protobuf.dart';
 import 'package:test/test.dart';
 
@@ -705,5 +706,97 @@ void main() {
       expectedCustomTrailers: customTrailers,
       serverHandlers: [handleRequest],
     );
+  });
+
+  group('Calls ended by the client', () {
+    const grace = Duration(milliseconds: 50);
+    const pastGrace = Duration(milliseconds: 200);
+
+    setUp(() {
+      // Only the cancel grace can fire within the test.
+      harness.channelOptions.resetStreamGrace = Duration(seconds: 10);
+      harness.channelOptions.cancelStreamGrace = grace;
+    });
+
+    test('reset the stream after the cancel grace when the client fails '
+        'the response', () async {
+      final requestDone = Completer<void>();
+      harness.fromClient.stream.listen(
+        validateDataMessage,
+        onDone: requestDone.complete,
+      );
+
+      final errors = <Object>[];
+      harness.client
+          .serverStreaming(dummyValue)
+          .listen((_) => fail('Unexpected response'), onError: errors.add);
+      await requestDone.future;
+      harness.sendResponseValue(1); // Data before headers.
+      await Future.delayed(Duration.zero);
+      expect(errors, [GrpcError.unimplemented('Received data before headers')]);
+      verifyNever(harness.stream.terminate());
+
+      await Future.delayed(pastGrace);
+      verify(harness.stream.terminate()).called(1);
+    });
+
+    test('reset the stream after the cancel grace when the request '
+        'fails', () async {
+      Stream<int> requests() async* {
+        throw 'Error';
+      }
+
+      await expectLater(
+        harness.client.clientStreaming(requests()),
+        throwsA(GrpcError.unknown('Error')),
+      );
+      verifyNever(harness.stream.terminate());
+
+      await Future.delayed(pastGrace);
+      verify(harness.stream.terminate()).called(1);
+    });
+
+    test('reset the stream after the cancel grace when cancelled', () async {
+      final requestDone = Completer<void>();
+      harness.fromClient.stream.listen(
+        validateDataMessage,
+        onDone: requestDone.complete,
+      );
+
+      final subscription = harness.client
+          .serverStreaming(dummyValue)
+          .listen((_) => fail('Unexpected response'));
+      await requestDone.future;
+      harness.sendResponseHeader();
+      await Future.delayed(Duration.zero);
+
+      await subscription.cancel();
+      verifyNever(harness.stream.terminate());
+
+      await Future.delayed(pastGrace);
+      verify(harness.stream.terminate()).called(1);
+    });
+
+    test('leave the stream for the server to end within the grace '
+        'when cancelled', () async {
+      final requestDone = Completer<void>();
+      harness.fromClient.stream.listen(
+        validateDataMessage,
+        onDone: requestDone.complete,
+      );
+
+      final subscription = harness.client
+          .serverStreaming(dummyValue)
+          .listen((_) => fail('Unexpected response'));
+      await requestDone.future;
+
+      await subscription.cancel();
+      harness
+        ..sendResponseHeader()
+        ..sendResponseTrailer();
+      await Future.delayed(pastGrace);
+
+      verifyNever(harness.stream.terminate());
+    });
   });
 }

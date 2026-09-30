@@ -33,6 +33,8 @@ export 'src/client/method.dart' show ClientMethod;
 export 'src/client/options.dart'
     show
         defaultIdleTimeout,
+        defaultResetStreamGrace,
+        defaultCancelStreamGrace,
         BackoffStrategy,
         defaultBackoffStrategy,
         ChannelOptions;
