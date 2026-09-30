@@ -272,4 +272,37 @@ void main() {
     verify(stream.terminate()).called(1);
     expect(transport.done, completes);
   });
+
+  test('request frames after an undecodable response are dropped', () async {
+    when(stream.terminate()).thenAnswer((_) => fromClient.close());
+    final sent = <StreamMessage>[];
+    fromClient.stream.listen(sent.add);
+    transport.incomingMessages.listen(null, onError: (_) {});
+    sendHeaders();
+    toClient.add(DataStreamMessage([1, 0, 0, 0, 1, 0]));
+    await Future.delayed(Duration.zero);
+    verify(stream.terminate()).called(1);
+
+    transport.outgoingMessages.add([1, 2, 3]); // Producer has not heard yet.
+    await Future.delayed(Duration.zero);
+    expect(sent, isEmpty);
+  });
+
+  group('skipGrace', () {
+    test('resets a terminated stream now', () async {
+      await transport.terminate();
+      verifyNever(stream.terminate());
+
+      transport.skipGrace();
+      verify(stream.terminate()).called(1);
+    });
+
+    test('makes a later terminate reset at once', () async {
+      transport.skipGrace();
+      verifyNever(stream.terminate());
+
+      transport.terminate();
+      verify(stream.terminate()).called(1);
+    });
+  });
 }

@@ -39,7 +39,8 @@ class Http2TransportStream extends GrpcTransportStream {
 
   StreamSubscription<GrpcMessage>? _incomingSubscription;
   bool _incomingDone = false;
-  bool _reset = false;
+  bool _sinkClosed = false;
+  bool _skipGrace = false;
   Future<void>? _terminated;
   Timer? _resetTimer;
   final _done = Completer<void>();
@@ -73,7 +74,8 @@ class Http2TransportStream extends GrpcTransportStream {
     _incomingMessages.onListen = _listenIncoming;
     _incomingMessages.onPause = () => _incomingSubscription?.pause();
     _incomingMessages.onResume = () => _incomingSubscription?.resume();
-    // package:http2 closes its sink on reset, so nothing may reach it after.
+    // package:http2 closes its sink when a stream terminates abnormally, so
+    // nothing may reach it after.
     final sink = _transportStream.outgoingMessages;
     _outgoingMessages.stream
         .map((payload) => frame(payload, compression))
@@ -81,13 +83,13 @@ class Http2TransportStream extends GrpcTransportStream {
         .handleError(_onError)
         .listen(
           (message) {
-            if (!_reset) sink.add(message);
+            if (!_sinkClosed) sink.add(message);
           },
           onError: (Object error, StackTrace stackTrace) {
-            if (!_reset) sink.addError(error, stackTrace);
+            if (!_sinkClosed) sink.addError(error, stackTrace);
           },
           onDone: () {
-            if (!_reset) sink.close();
+            if (!_sinkClosed) sink.close();
           },
           cancelOnError: true,
         );
@@ -114,6 +116,7 @@ class Http2TransportStream extends GrpcTransportStream {
     _onIncomingDone();
     // A decoder error leaves the HTTP/2 stream open, so reset it. A stream
     // package:http2 failed itself is already terminated and this is a no-op.
+    _sinkClosed = true;
     _transportStream.terminate();
   }
 
@@ -159,7 +162,7 @@ class Http2TransportStream extends GrpcTransportStream {
       while (_incomingSubscription!.isPaused) {
         _incomingSubscription!.resume();
       }
-      if (grace <= Duration.zero) {
+      if (_skipGrace || grace <= Duration.zero) {
         reset(); // Synchronous, so a zero grace is truly immediate.
       } else {
         _resetTimer = Timer(grace, reset);
@@ -173,8 +176,15 @@ class Http2TransportStream extends GrpcTransportStream {
     _resetTimer?.cancel();
     _resetTimer = null;
     if (_incomingDone) return;
-    _reset = true;
+    _sinkClosed = true;
     _listenIncoming(); // Observe the reset so [done] completes.
     _transportStream.terminate();
+  }
+
+  /// Resets instead of waiting out a grace: now if already terminated,
+  /// otherwise as soon as [terminate] or [cancel] is called.
+  void skipGrace() {
+    _skipGrace = true;
+    if (isTerminated) reset();
   }
 }
