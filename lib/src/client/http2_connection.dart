@@ -230,10 +230,11 @@ class Http2ClientConnection implements connection.ClientConnection {
   Future<void> shutdown() async {
     if (_state == ConnectionState.shutdown) return;
     _setShutdownState();
-    // Draining streams, and calls that end while finish() waits, would
-    // otherwise hold finish() for their grace.
+    // Draining streams would otherwise hold finish() for their grace. Calls
+    // still running keep theirs: resetting them at once would race their
+    // trailers and could fail the other calls finish() is waiting for.
     for (final stream in _streams.toList()) {
-      stream.skipGrace();
+      if (stream.isTerminated) stream.reset();
     }
     await _transportConnection?.finish();
     keepAliveManager?.onTransportTermination();
@@ -315,7 +316,6 @@ class Http2ClientConnection implements connection.ClientConnection {
 
   void _disconnect() {
     _transportConnection = null;
-    _streams.clear(); // Streams nobody listened to would never complete.
     keepAliveManager?.onTransportTermination();
     keepAliveManager = null;
   }

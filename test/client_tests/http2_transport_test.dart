@@ -303,22 +303,4 @@ void main() {
       expect(transport.done, completes);
     },
   );
-
-  group('skipGrace', () {
-    test('resets a terminated stream now', () async {
-      await transport.terminate();
-      verifyNever(stream.terminate());
-
-      transport.skipGrace();
-      verify(stream.terminate()).called(1);
-    });
-
-    test('makes a later terminate reset at once', () async {
-      transport.skipGrace();
-      verifyNever(stream.terminate());
-
-      transport.terminate();
-      verify(stream.terminate()).called(1);
-    });
-  });
 }

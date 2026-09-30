@@ -524,22 +524,26 @@ class ClientCall<Q, R> implements Response {
     } else {
       _stream?.terminate();
     }
+    if (!_headers.isCompleted) {
+      _headers.complete({});
+    }
+    if (!_trailers.isCompleted) {
+      _trailers.complete({});
+    }
     final futures = <Future>[];
     if (_requestSubscription != null) {
       futures.add(_requestSubscription!.cancel());
     } else if (!_requestsCancelled) {
       // A request stream not sent yet still has to learn the call is over.
       _requestsCancelled = true;
-      futures.add(_requests.listen(null).cancel());
+      try {
+        futures.add(_requests.listen(null).cancel());
+      } on StateError {
+        // Already listened to elsewhere; not ours to cancel.
+      }
     }
     if (_responseSubscription != null) {
       futures.add(_responseSubscription!.cancel());
-    }
-    if (!_headers.isCompleted) {
-      _headers.complete({});
-    }
-    if (!_trailers.isCompleted) {
-      _trailers.complete({});
     }
     await Future.wait(futures);
   }

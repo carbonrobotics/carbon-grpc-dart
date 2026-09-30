@@ -40,7 +40,6 @@ class Http2TransportStream extends GrpcTransportStream {
   StreamSubscription<GrpcMessage>? _incomingSubscription;
   bool _incomingDone = false;
   bool _sinkClosed = false;
-  bool _skipGrace = false;
   Future<void>? _terminated;
   Timer? _resetTimer;
   final _done = Completer<void>();
@@ -74,6 +73,7 @@ class Http2TransportStream extends GrpcTransportStream {
     _incomingMessages.onListen = _listenIncoming;
     _incomingMessages.onPause = () => _incomingSubscription?.pause();
     _incomingMessages.onResume = () => _incomingSubscription?.resume();
+    _transportStream.onTerminated = (_) => _sinkClosed = true; // Peer reset.
     final sink = _transportStream.outgoingMessages;
     _outgoingMessages.stream
         .map((payload) => frame(payload, compression))
@@ -88,9 +88,10 @@ class Http2TransportStream extends GrpcTransportStream {
         );
   }
 
-  /// package:http2 closes the sink when the stream terminates abnormally,
-  /// before it reports a reset by the server. Frames for a closed sink are
-  /// dropped: the stream is gone either way.
+  /// package:http2 closes the sink when the stream terminates abnormally.
+  /// A peer reset is signalled through [TransportStream.onTerminated]; a
+  /// connection failure is not, so a closed sink is also caught here. Frames
+  /// for a closed sink are dropped: the stream is gone either way.
   void _toSink(void Function() write) {
     if (_sinkClosed) return;
     try {
@@ -167,7 +168,7 @@ class Http2TransportStream extends GrpcTransportStream {
       while (_incomingSubscription!.isPaused) {
         _incomingSubscription!.resume();
       }
-      if (_skipGrace || grace <= Duration.zero) {
+      if (grace <= Duration.zero) {
         reset(); // Synchronous, so a zero grace is truly immediate.
       } else {
         _resetTimer = Timer(grace, reset);
@@ -184,12 +185,5 @@ class Http2TransportStream extends GrpcTransportStream {
     _sinkClosed = true;
     _listenIncoming(); // Observe the reset so [done] completes.
     _transportStream.terminate();
-  }
-
-  /// Resets instead of waiting out a grace: now if already terminated,
-  /// otherwise as soon as [terminate] or [cancel] is called.
-  void skipGrace() {
-    _skipGrace = true;
-    if (isTerminated) reset();
   }
 }

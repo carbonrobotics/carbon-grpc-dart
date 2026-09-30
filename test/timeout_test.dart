@@ -205,26 +205,6 @@ void main() {
         verifyNever(harness.stream.terminate());
       });
 
-      test('are reset when they end after the connection shut down', () async {
-        final requestDone = Completer<void>();
-        harness.fromClient.stream.listen(
-          validateDataMessage,
-          onDone: requestDone.complete,
-        );
-        final call = harness.client.unary(
-          dummyValue,
-          options: CallOptions(timeout: Duration(milliseconds: 10)),
-        );
-        await requestDone.future;
-
-        await harness.connection!.shutdown();
-        await harness.expectThrows(
-          call,
-          GrpcError.deadlineExceeded('Deadline exceeded'),
-        );
-        verify(harness.stream.terminate()).called(1);
-      });
-
       test('before the request is sent do not open a stream', () async {
         final provider = Completer<void>();
         final call = harness.client.unary(
