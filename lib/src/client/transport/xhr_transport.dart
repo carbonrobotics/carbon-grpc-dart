@@ -159,6 +159,10 @@ class XhrTransportStream implements GrpcTransportStream {
     _close();
     _request.abort();
   }
+
+  // An aborted XHR needs no grace.
+  @override
+  Future<void> cancel() => terminate();
 }
 
 // XMLHttpRequest is an extension type and can't be extended or implemented.
