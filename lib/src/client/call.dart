@@ -202,7 +202,6 @@ class ClientCall<Q, R> implements Response {
   final _responses = StreamController<R>();
   StreamSubscription<List<int>>? _requestSubscription;
   StreamSubscription<GrpcMessage>? _responseSubscription;
-  bool _requestsCancelled = false;
 
   bool isCancelled = false;
   Timer? _timeoutTimer;
@@ -533,14 +532,6 @@ class ClientCall<Q, R> implements Response {
     final futures = <Future>[];
     if (_requestSubscription != null) {
       futures.add(_requestSubscription!.cancel());
-    } else if (!_requestsCancelled) {
-      // A request stream not sent yet still has to learn the call is over.
-      _requestsCancelled = true;
-      try {
-        futures.add(_requests.listen(null).cancel());
-      } on StateError {
-        // Already listened to elsewhere; not ours to cancel.
-      }
     }
     if (_responseSubscription != null) {
       futures.add(_responseSubscription!.cancel());

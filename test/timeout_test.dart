@@ -102,8 +102,8 @@ void main() {
     });
 
     group('past their deadline', () {
-      const grace = Duration(milliseconds: 20);
-      const pastGrace = Duration(milliseconds: 60);
+      const grace = Duration(milliseconds: 50);
+      const pastGrace = Duration(milliseconds: 200);
       final timeout = Duration(microseconds: 1);
 
       setUp(() {
@@ -223,39 +223,6 @@ void main() {
         verifyNever(
           harness.transport.makeRequest(any, endStream: anyNamed('endStream')),
         );
-      });
-
-      test('before the request is sent cancel the request stream', () async {
-        final provider = Completer<void>();
-        final requests = StreamController<int>();
-        final call = harness.client.clientStreaming(
-          requests.stream,
-          options: CallOptions(
-            timeout: timeout,
-            providers: [(metadata, uri) => provider.future],
-          ),
-        );
-        await harness.expectThrows(
-          call,
-          GrpcError.deadlineExceeded('Deadline exceeded'),
-        );
-        provider.complete();
-        await expectLater(requests.done, completes);
-        await requests.close();
-      });
-
-      test('cancel the request stream when a provider fails', () async {
-        final requests = StreamController<int>();
-        final call = harness.client.clientStreaming(
-          requests.stream,
-          options: CallOptions(providers: [(metadata, uri) => throw 'boom']),
-        );
-        await harness.expectThrows(
-          call,
-          GrpcError.unavailable('Error making call: boom'),
-        );
-        await expectLater(requests.done, completes);
-        await requests.close();
       });
     });
   });

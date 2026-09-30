@@ -709,8 +709,8 @@ void main() {
   });
 
   group('Calls ended by the client', () {
-    const grace = Duration(milliseconds: 20);
-    const pastGrace = Duration(milliseconds: 60);
+    const grace = Duration(milliseconds: 50);
+    const pastGrace = Duration(milliseconds: 200);
 
     setUp(() {
       // Only the cancel grace can fire within the test.

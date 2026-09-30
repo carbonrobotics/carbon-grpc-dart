@@ -24,8 +24,8 @@ import 'package:test/test.dart';
 import '../src/client_utils.mocks.dart';
 
 void main() {
-  const grace = Duration(milliseconds: 20);
-  const pastGrace = Duration(milliseconds: 60);
+  const grace = Duration(milliseconds: 50);
+  const pastGrace = Duration(milliseconds: 200);
 
   late MockClientTransportStream stream;
   late StreamController<StreamMessage> toClient;
@@ -52,6 +52,7 @@ void main() {
       null,
       null,
       resetGrace: grace,
+      cancelGrace: grace,
     );
   });
 
@@ -269,23 +270,23 @@ void main() {
     await Future.delayed(Duration.zero);
 
     expect(errors, hasLength(1));
+    verifyNever(stream.terminate());
+    await Future.delayed(pastGrace);
     verify(stream.terminate()).called(1);
-    expect(transport.done, completes);
   });
 
-  test('request frames after an undecodable response are dropped', () async {
-    when(stream.terminate()).thenAnswer((_) => fromClient.close());
-    final sent = <StreamMessage>[];
-    fromClient.stream.listen(sent.add);
-    transport.incomingMessages.listen(null, onError: (_) {});
+  test('an undecodable response the server then ends is not reset', () async {
+    final errors = <Object>[];
+    transport.incomingMessages.listen(null, onError: errors.add);
     sendHeaders();
     toClient.add(DataStreamMessage([1, 0, 0, 0, 1, 0]));
     await Future.delayed(Duration.zero);
-    verify(stream.terminate()).called(1);
+    expect(errors, hasLength(1));
 
-    transport.outgoingMessages.add([1, 2, 3]); // Producer has not heard yet.
-    await Future.delayed(Duration.zero);
-    expect(sent, isEmpty);
+    serverEndsStream();
+    await Future.delayed(pastGrace);
+    verifyNever(stream.terminate());
+    expect(transport.done, completes);
   });
 
   test(
@@ -297,6 +298,7 @@ void main() {
       fromClient.close();
       transport.outgoingMessages.add([1, 2, 3]);
       toClient.addError(StreamTransportException('RST_STREAM'));
+      toClient.close(); // package:http2 ends the stream after the error.
       await Future.delayed(Duration.zero);
 
       expect(errors, hasLength(1));

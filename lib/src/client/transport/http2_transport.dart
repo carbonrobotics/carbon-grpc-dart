@@ -102,8 +102,8 @@ class Http2TransportStream extends GrpcTransportStream {
   }
 
   void _listenIncoming() {
-    // Not cancelOnError: a decoder error is handled by resetting the stream,
-    // and cancelling first would make package:http2 send a second RST_STREAM.
+    // Not cancelOnError: a decoder error drains the stream like a cancel, and
+    // cancelling would make package:http2 reset a half-closed stream at once.
     _incomingSubscription ??= _decodedMessages.listen(
       _onIncomingData,
       onError: _onIncomingError,
@@ -117,13 +117,13 @@ class Http2TransportStream extends GrpcTransportStream {
   }
 
   void _onIncomingError(Object error, StackTrace stackTrace) {
-    if (_incomingDone) return;
-    if (!isTerminated) _incomingMessages.addError(error, stackTrace);
-    _onIncomingDone();
-    // A decoder error leaves the HTTP/2 stream open, so reset it. A stream
-    // package:http2 failed itself is already terminated and this is a no-op.
-    _sinkClosed = true;
-    _transportStream.terminate();
+    if (_incomingDone || isTerminated) return; // Draining: the caller is gone.
+    _incomingMessages.addError(error, stackTrace);
+    // The response is unusable, but the server may be ending the stream right
+    // now. A decoder error leaves the HTTP/2 stream open, so drain it like a
+    // cancel instead of racing the trailers with a reset. A stream
+    // package:http2 failed itself ends on its own and the reset is a no-op.
+    cancel();
   }
 
   void _onIncomingDone() {
