@@ -39,6 +39,7 @@ class Http2TransportStream extends GrpcTransportStream {
 
   StreamSubscription<GrpcMessage>? _incomingSubscription;
   bool _incomingDone = false;
+  bool _reset = false;
   Future<void>? _terminated;
   Timer? _resetTimer;
   final _done = Completer<void>();
@@ -72,35 +73,48 @@ class Http2TransportStream extends GrpcTransportStream {
     _incomingMessages.onListen = _listenIncoming;
     _incomingMessages.onPause = () => _incomingSubscription?.pause();
     _incomingMessages.onResume = () => _incomingSubscription?.resume();
+    // package:http2 closes its sink on reset, so nothing may reach it after.
+    final sink = _transportStream.outgoingMessages;
     _outgoingMessages.stream
         .map((payload) => frame(payload, compression))
         .map<StreamMessage>((bytes) => DataStreamMessage(bytes))
         .handleError(_onError)
         .listen(
-          _transportStream.outgoingMessages.add,
-          onError: _transportStream.outgoingMessages.addError,
-          onDone: _transportStream.outgoingMessages.close,
+          (message) {
+            if (!_reset) sink.add(message);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (!_reset) sink.addError(error, stackTrace);
+          },
+          onDone: () {
+            if (!_reset) sink.close();
+          },
           cancelOnError: true,
         );
   }
 
   void _listenIncoming() {
+    // Not cancelOnError: a decoder error is handled by resetting the stream,
+    // and cancelling first would make package:http2 send a second RST_STREAM.
     _incomingSubscription ??= _decodedMessages.listen(
       _onIncomingData,
       onError: _onIncomingError,
       onDone: _onIncomingDone,
-      cancelOnError: true,
     );
   }
 
   void _onIncomingData(GrpcMessage message) {
-    if (isTerminated) return; // Draining: the caller is gone.
+    if (_incomingDone || isTerminated) return; // Draining: the caller is gone.
     _incomingMessages.add(message);
   }
 
   void _onIncomingError(Object error, StackTrace stackTrace) {
+    if (_incomingDone) return;
     if (!isTerminated) _incomingMessages.addError(error, stackTrace);
     _onIncomingDone();
+    // A decoder error leaves the HTTP/2 stream open, so reset it. A stream
+    // package:http2 failed itself is already terminated and this is a no-op.
+    _transportStream.terminate();
   }
 
   void _onIncomingDone() {
@@ -159,6 +173,7 @@ class Http2TransportStream extends GrpcTransportStream {
     _resetTimer?.cancel();
     _resetTimer = null;
     if (_incomingDone) return;
+    _reset = true;
     _listenIncoming(); // Observe the reset so [done] completes.
     _transportStream.terminate();
   }

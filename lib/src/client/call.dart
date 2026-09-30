@@ -282,7 +282,10 @@ class ClientCall<Q, R> implements Response {
 
   void _sendRequest(ClientConnection connection, Map<String, String> metadata) {
     // A metadata provider may resolve after the call timed out or was cancelled.
-    if (isCancelled) return;
+    if (isCancelled) {
+      _requests.listen(null).cancel(); // Tell the producer the call is over.
+      return;
+    }
     late final GrpcTransportStream stream;
     try {
       stream = connection.makeRequest(

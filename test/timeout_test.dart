@@ -224,6 +224,24 @@ void main() {
           harness.transport.makeRequest(any, endStream: anyNamed('endStream')),
         );
       });
+
+      test('before the request is sent cancel the request stream', () async {
+        final provider = Completer<void>();
+        final requests = StreamController<int>();
+        final call = harness.client.clientStreaming(
+          requests.stream,
+          options: CallOptions(
+            timeout: timeout,
+            providers: [(metadata, uri) => provider.future],
+          ),
+        );
+        await harness.expectThrows(
+          call,
+          GrpcError.deadlineExceeded('Deadline exceeded'),
+        );
+        provider.complete();
+        await expectLater(requests.done, completes);
+      });
     });
   });
 

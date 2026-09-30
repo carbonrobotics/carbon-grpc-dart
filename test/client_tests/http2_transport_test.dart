@@ -32,7 +32,14 @@ void main() {
   late StreamController<StreamMessage> fromClient;
   late Http2TransportStream transport;
 
+  final responseHeaders = [
+    Header.ascii(':status', '200'),
+    Header.ascii('content-type', 'application/grpc'),
+  ];
+  var headersSent = false;
+
   setUp(() {
+    headersSent = false;
     stream = MockClientTransportStream();
     toClient = StreamController();
     fromClient = StreamController();
@@ -54,18 +61,18 @@ void main() {
   });
 
   void sendHeaders() {
-    toClient.add(
-      HeadersStreamMessage([
-        Header.ascii(':status', '200'),
-        Header.ascii('content-type', 'application/grpc'),
-      ]),
-    );
+    headersSent = true;
+    toClient.add(HeadersStreamMessage(responseHeaders));
   }
 
-  /// The server ends the stream with its trailers.
+  /// The server ends the stream with its trailers (trailers-only if no
+  /// headers were sent, which the decoder requires to carry `:status`).
   void serverEndsStream() {
     toClient.add(
-      HeadersStreamMessage([Header.ascii('grpc-status', '0')], endStream: true),
+      HeadersStreamMessage([
+        if (!headersSent) ...responseHeaders,
+        Header.ascii('grpc-status', '0'),
+      ], endStream: true),
     );
     toClient.close();
   }
@@ -231,5 +238,38 @@ void main() {
 
     transport.terminate();
     verify(stream.terminate()).called(1);
+  });
+
+  test('a reset drops request frames not yet handed to the stream', () async {
+    transport = Http2TransportStream(
+      stream,
+      (error, _) => fail('Unexpected error: $error'),
+      null,
+      null,
+      resetGrace: Duration.zero,
+    );
+    // package:http2 closes its sink when the stream is reset.
+    when(stream.terminate()).thenAnswer((_) => fromClient.close());
+    final sent = <StreamMessage>[];
+    fromClient.stream.listen(sent.add);
+
+    transport.outgoingMessages.add([1, 2, 3]);
+    await transport.terminate();
+    await Future.delayed(Duration.zero);
+
+    expect(sent, isEmpty);
+  });
+
+  test('an undecodable response resets the stream', () async {
+    final errors = <Object>[];
+    transport.incomingMessages.listen(null, onError: errors.add);
+    sendHeaders();
+    // A compressed frame with no grpc-encoding to decompress it.
+    toClient.add(DataStreamMessage([1, 0, 0, 0, 1, 0]));
+    await Future.delayed(Duration.zero);
+
+    expect(errors, hasLength(1));
+    verify(stream.terminate()).called(1);
+    expect(transport.done, completes);
   });
 }

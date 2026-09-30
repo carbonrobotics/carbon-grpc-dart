@@ -314,6 +314,7 @@ class Http2ClientConnection implements connection.ClientConnection {
 
   void _disconnect() {
     _transportConnection = null;
+    _streams.clear(); // Streams nobody listened to would never complete.
     keepAliveManager?.onTransportTermination();
     keepAliveManager = null;
   }

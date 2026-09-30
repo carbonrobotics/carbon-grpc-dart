@@ -73,24 +73,26 @@ class ChannelOptions {
   final ClientKeepAliveOptions keepAlive;
   final Proxy? proxy;
 
-  /// How long a terminated call leaves its HTTP/2 stream open for the server
-  /// to end before the client resets it.
+  /// How long a call that passed its deadline leaves its HTTP/2 stream open
+  /// for the server to end before the client resets it.
   ///
-  /// A call ends its stream when it is cancelled, fails or passes its
-  /// deadline. Resetting the stream right away races the server's final
-  /// frames: package:http2 treats a HEADERS frame for a stream it has already
-  /// reset as a connection error and fails every call sharing the connection.
-  /// The server received the same deadline in `grpc-timeout` and ends a
-  /// timed-out stream itself, so within the grace no reset is normally needed.
+  /// Resetting the stream right away races the server's final frames:
+  /// package:http2 treats a HEADERS frame for a stream it has already reset as
+  /// a connection error and fails every call sharing the connection. The
+  /// server received the same deadline in `grpc-timeout` and ends a timed-out
+  /// stream itself, so within the grace no reset is normally needed.
+  ///
+  /// Every other way a call ends uses [cancelStreamGrace].
   ///
   /// [Duration.zero] resets the stream immediately.
   final Duration resetStreamGrace;
 
-  /// [resetStreamGrace] for a call the client cancelled.
+  /// [resetStreamGrace] for a call the client ended itself: a cancel, a
+  /// request error or a response the client rejected.
   ///
-  /// The server does not learn of a cancellation until the reset, so a
-  /// cancelled server-streaming call keeps receiving data for the whole grace.
-  /// This grace only needs to cover trailers already in flight, so it is much
+  /// The server does not learn of any of these until the reset, so a
+  /// server-streaming call keeps receiving data for the whole grace. This
+  /// grace only needs to cover trailers already in flight, so it is much
   /// shorter than [resetStreamGrace].
   ///
   /// [Duration.zero] resets the stream immediately.
