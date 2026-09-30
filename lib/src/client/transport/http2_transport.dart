@@ -34,6 +34,9 @@ class Http2TransportStream extends GrpcTransportStream {
   /// See [ChannelOptions.resetStreamGrace].
   final Duration _resetGrace;
 
+  /// See [ChannelOptions.cancelStreamGrace].
+  final Duration _cancelGrace;
+
   StreamSubscription<GrpcMessage>? _incomingSubscription;
   bool _incomingDone = false;
   Future<void>? _terminated;
@@ -49,7 +52,7 @@ class Http2TransportStream extends GrpcTransportStream {
   /// Completes once the server has ended the stream or it has been reset.
   Future<void> get done => _done.future;
 
-  /// Whether [terminate] has been called.
+  /// Whether [terminate] or [cancel] has been called.
   bool get isTerminated => _terminated != null;
 
   Http2TransportStream(
@@ -58,7 +61,9 @@ class Http2TransportStream extends GrpcTransportStream {
     CodecRegistry? codecRegistry,
     Codec? compression, {
     Duration resetGrace = Duration.zero,
+    Duration cancelGrace = Duration.zero,
   }) : _resetGrace = resetGrace,
+       _cancelGrace = cancelGrace,
        _decodedMessages = _transportStream.incomingMessages
            .transform(GrpcHttpDecoder(forResponse: true))
            .transform(grpcDecompressor(codecRegistry: codecRegistry)) {
@@ -118,12 +123,19 @@ class Http2TransportStream extends GrpcTransportStream {
   /// treats a HEADERS frame for a stream it has already reset as a connection
   /// error and fails every call sharing the connection.
   ///
-  /// Frames that arrive while draining are discarded. Calling this more than
-  /// once has no further effect.
+  /// Frames that arrive while draining are discarded. Calling this or [cancel]
+  /// more than once has no further effect.
   @override
-  Future<void> terminate() => _terminated ??= _drain();
+  Future<void> terminate() => _terminated ??= _drain(_resetGrace);
 
-  Future<void> _drain() async {
+  /// [terminate] with [ChannelOptions.cancelStreamGrace].
+  ///
+  /// The server does not learn of a cancellation until the reset, so the
+  /// stream is reset sooner. The grace still covers trailers already in flight.
+  @override
+  Future<void> cancel() => _terminated ??= _drain(_cancelGrace);
+
+  Future<void> _drain(Duration grace) async {
     if (!_incomingDone) {
       // The server's END_STREAM has to be observed even if the caller paused
       // or never listened.
@@ -133,7 +145,7 @@ class Http2TransportStream extends GrpcTransportStream {
       while (_incomingSubscription!.isPaused) {
         _incomingSubscription!.resume();
       }
-      _resetTimer = Timer(_resetGrace, reset);
+      _resetTimer = Timer(grace, reset);
     }
     await _outgoingMessages.close();
   }

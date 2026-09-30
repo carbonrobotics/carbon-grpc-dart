@@ -205,6 +205,7 @@ class Http2ClientConnection implements connection.ClientConnection {
       options.codecRegistry,
       compressionCodec,
       resetGrace: options.resetStreamGrace,
+      cancelGrace: options.cancelStreamGrace,
     );
     _streams.add(stream);
     stream.done.whenComplete(() => _streams.remove(stream));

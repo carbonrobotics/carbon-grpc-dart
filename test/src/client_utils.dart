@@ -85,6 +85,9 @@ class FakeChannelOptions implements ChannelOptions {
 
   @override
   Duration resetStreamGrace = defaultResetStreamGrace;
+
+  @override
+  Duration cancelStreamGrace = defaultCancelStreamGrace;
 }
 
 class FakeChannel extends ClientChannel {

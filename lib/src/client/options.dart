@@ -35,6 +35,9 @@ const defaultConnectionTimeOut = Duration(minutes: 50);
 /// See [ChannelOptions.resetStreamGrace].
 const defaultResetStreamGrace = Duration(seconds: 5);
 
+/// See [ChannelOptions.cancelStreamGrace].
+const defaultCancelStreamGrace = Duration(milliseconds: 500);
+
 typedef BackoffStrategy = Duration Function(Duration? lastBackoff);
 
 // Backoff algorithm from https://github.com/grpc/grpc/blob/master/doc/connection-backoff.md
@@ -83,6 +86,16 @@ class ChannelOptions {
   /// [Duration.zero] resets the stream immediately.
   final Duration resetStreamGrace;
 
+  /// [resetStreamGrace] for a call the client cancelled.
+  ///
+  /// The server does not learn of a cancellation until the reset, so a
+  /// cancelled server-streaming call keeps receiving data for the whole grace.
+  /// This grace only needs to cover trailers already in flight, so it is much
+  /// shorter than [resetStreamGrace].
+  ///
+  /// [Duration.zero] resets the stream immediately.
+  final Duration cancelStreamGrace;
+
   const ChannelOptions({
     this.credentials = const ChannelCredentials.secure(),
     this.idleTimeout = defaultIdleTimeout,
@@ -94,5 +107,6 @@ class ChannelOptions {
     this.keepAlive = const ClientKeepAliveOptions(),
     this.proxy,
     this.resetStreamGrace = defaultResetStreamGrace,
+    this.cancelStreamGrace = defaultCancelStreamGrace,
   }) : _userAgent = userAgent;
 }

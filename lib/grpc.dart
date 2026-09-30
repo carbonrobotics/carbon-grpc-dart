@@ -34,6 +34,7 @@ export 'src/client/options.dart'
     show
         defaultIdleTimeout,
         defaultResetStreamGrace,
+        defaultCancelStreamGrace,
         BackoffStrategy,
         defaultBackoffStrategy,
         ChannelOptions;

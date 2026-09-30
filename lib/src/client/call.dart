@@ -503,17 +503,23 @@ class ClientCall<Q, R> implements Response {
       _responses.addError(error);
       _finishTimelineWithError(error, _requestTimeline);
     }
-    return _terminate();
+    return _terminate(cancelled: true);
   }
 
-  Future<void> _terminate() async {
+  /// [cancelled] is true for an explicit client cancel, which the server does
+  /// not know about; other terminations let the transport wait for it.
+  Future<void> _terminate({bool cancelled = false}) async {
     isCancelled = true;
     _timeoutTimer?.cancel();
     // Don't await _responses.close() here. It'll only complete once the done
     // event has been delivered, and it's the caller of this function that is
     // reading from responses as well, so we might end up deadlocked.
     _responses.close();
-    _stream?.terminate();
+    if (cancelled) {
+      _stream?.cancel();
+    } else {
+      _stream?.terminate();
+    }
     final futures = <Future>[];
     if (_requestSubscription != null) {
       futures.add(_requestSubscription!.cancel());

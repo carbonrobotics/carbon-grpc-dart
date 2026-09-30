@@ -167,4 +167,56 @@ void main() {
     expect(toClient.isPaused, isFalse);
     await subscription.cancel();
   });
+
+  group('cancel', () {
+    // A reset grace long enough that only the cancel grace can fire in time.
+    const longGrace = Duration(seconds: 10);
+
+    setUp(() {
+      transport = Http2TransportStream(
+        stream,
+        (error, _) => fail('Unexpected error: $error'),
+        null,
+        null,
+        resetGrace: longGrace,
+        cancelGrace: grace,
+      );
+    });
+
+    test('resets after the cancel grace', () async {
+      await transport.cancel();
+      verifyNever(stream.terminate());
+
+      await Future.delayed(pastGrace);
+      verify(stream.terminate()).called(1);
+    });
+
+    test('leaves the stream for the server to end within the grace', () async {
+      await transport.cancel();
+      serverEndsStream();
+      await Future.delayed(pastGrace);
+
+      verifyNever(stream.terminate());
+      expect(transport.done, completes);
+    });
+
+    test('after terminate keeps the reset grace', () async {
+      // The response stream's done event cancels the call after every
+      // termination, so a later cancel must not shorten a deadline's grace.
+      await transport.terminate();
+      await transport.cancel();
+      await Future.delayed(pastGrace);
+
+      verifyNever(stream.terminate());
+      transport.reset();
+    });
+
+    test('before terminate keeps the cancel grace', () async {
+      await transport.cancel();
+      await transport.terminate();
+      await Future.delayed(pastGrace);
+
+      verify(stream.terminate()).called(1);
+    });
+  });
 }
