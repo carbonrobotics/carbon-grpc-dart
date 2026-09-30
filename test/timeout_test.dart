@@ -241,6 +241,7 @@ void main() {
         );
         provider.complete();
         await expectLater(requests.done, completes);
+        await requests.close();
       });
 
       test('cancel the request stream when a provider fails', () async {
@@ -254,6 +255,7 @@ void main() {
           GrpcError.unavailable('Error making call: boom'),
         );
         await expectLater(requests.done, completes);
+        await requests.close();
       });
     });
   });
