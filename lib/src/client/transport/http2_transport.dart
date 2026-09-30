@@ -145,7 +145,11 @@ class Http2TransportStream extends GrpcTransportStream {
       while (_incomingSubscription!.isPaused) {
         _incomingSubscription!.resume();
       }
-      _resetTimer = Timer(grace, reset);
+      if (grace <= Duration.zero) {
+        reset(); // Synchronous, so a zero grace is truly immediate.
+      } else {
+        _resetTimer = Timer(grace, reset);
+      }
     }
     await _outgoingMessages.close();
   }

@@ -219,4 +219,17 @@ void main() {
       verify(stream.terminate()).called(1);
     });
   });
+
+  test('a zero grace resets synchronously', () {
+    transport = Http2TransportStream(
+      stream,
+      (error, _) => fail('Unexpected error: $error'),
+      null,
+      null,
+      resetGrace: Duration.zero,
+    );
+
+    transport.terminate();
+    verify(stream.terminate()).called(1);
+  });
 }

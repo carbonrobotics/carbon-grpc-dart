@@ -708,7 +708,7 @@ void main() {
     );
   });
 
-  group('Cancelled calls', () {
+  group('Calls ended by the client', () {
     const grace = Duration(milliseconds: 20);
     const pastGrace = Duration(milliseconds: 60);
 
@@ -718,7 +718,45 @@ void main() {
       harness.channelOptions.cancelStreamGrace = grace;
     });
 
-    test('reset the stream after the cancel grace', () async {
+    test('reset the stream after the cancel grace when the client fails '
+        'the response', () async {
+      final requestDone = Completer<void>();
+      harness.fromClient.stream.listen(
+        validateDataMessage,
+        onDone: requestDone.complete,
+      );
+
+      final errors = <Object>[];
+      harness.client
+          .serverStreaming(dummyValue)
+          .listen((_) => fail('Unexpected response'), onError: errors.add);
+      await requestDone.future;
+      harness.sendResponseValue(1); // Data before headers.
+      await Future.delayed(Duration.zero);
+      expect(errors, [GrpcError.unimplemented('Received data before headers')]);
+      verifyNever(harness.stream.terminate());
+
+      await Future.delayed(pastGrace);
+      verify(harness.stream.terminate()).called(1);
+    });
+
+    test('reset the stream after the cancel grace when the request '
+        'fails', () async {
+      Stream<int> requests() async* {
+        throw 'Error';
+      }
+
+      await expectLater(
+        harness.client.clientStreaming(requests()),
+        throwsA(GrpcError.unknown('Error')),
+      );
+      verifyNever(harness.stream.terminate());
+
+      await Future.delayed(pastGrace);
+      verify(harness.stream.terminate()).called(1);
+    });
+
+    test('reset the stream after the cancel grace when cancelled', () async {
       final requestDone = Completer<void>();
       harness.fromClient.stream.listen(
         validateDataMessage,
@@ -739,7 +777,8 @@ void main() {
       verify(harness.stream.terminate()).called(1);
     });
 
-    test('leave the stream for the server to end within the grace', () async {
+    test('leave the stream for the server to end within the grace '
+        'when cancelled', () async {
       final requestDone = Completer<void>();
       harness.fromClient.stream.listen(
         validateDataMessage,

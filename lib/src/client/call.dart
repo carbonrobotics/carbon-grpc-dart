@@ -365,7 +365,8 @@ class ClientCall<Q, R> implements Response {
     _requestSubscription?.cancel();
     _responseSubscription!.cancel();
     _responses.close();
-    _stream!.terminate();
+    // The server does not know the client failed the call.
+    _stream!.cancel();
   }
 
   /// If there's an error status then process it as a response error.
@@ -485,7 +486,8 @@ class ClientCall<Q, R> implements Response {
     _responses.close();
     _requestSubscription?.cancel();
     _responseSubscription?.cancel();
-    _stream!.terminate();
+    // The server does not know the client failed the call.
+    _stream!.cancel();
   }
 
   Stream<R> get response => _responses.stream;
@@ -507,7 +509,8 @@ class ClientCall<Q, R> implements Response {
   }
 
   /// [cancelled] is true for an explicit client cancel, which the server does
-  /// not know about; other terminations let the transport wait for it.
+  /// not know about. A deadline was sent to the server as `grpc-timeout`, so
+  /// that path lets the transport wait for it to end the stream.
   Future<void> _terminate({bool cancelled = false}) async {
     isCancelled = true;
     _timeoutTimer?.cancel();
